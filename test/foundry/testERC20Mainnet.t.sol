@@ -10,6 +10,7 @@ import "src/factory/ECDSAKernelFactory.sol";
 import "src/test/TestValidator.sol";
 import "src/test/TestExecutor.sol";
 import "src/test/TestERC721.sol";
+import {MockERC20} from "./MockERC20.sol";
 // test utils
 import "forge-std/Test.sol";
 import {ERC4337Utils} from "./ERC4337Utils.sol";
@@ -48,6 +49,8 @@ contract testERC20 is Test {
     address public proxima424;
     address payable beneficiary;
 
+    MockERC20 public mockToken;
+
     address public entryPointAdr = 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789;
     address public dai = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     // Address which holds >100M DAI on Ethereum Mainnet
@@ -71,6 +74,8 @@ contract testERC20 is Test {
         validator = new ECDSAValidator();
         ecdsaFactory = new ECDSAKernelFactory(factory, validator, entryPoint);
         userSA = Kernel(payable(address(ecdsaFactory.createAccount(owner, 0))));
+
+        mockToken = new MockERC20("mockERC20","mERC20");
 
         // Fund Addresses
         vm.deal(address(userSA), 1e30);
@@ -103,7 +108,7 @@ contract testERC20 is Test {
         ops[0] = userOp;
  
         uint256 prevGas = gasleft();
-        console.log("Kernel ETH Mainnet :Gas consumed in DAI transfer (cold access) is :" );
+        console.log("Kernel ETH Mainnet :: Gas consumed in DAI transfer (cold access) is :" );
         entryPoint.handleOps(ops, beneficiary);
         console.log(prevGas-gasleft());
         assertEq(IERC20(dai).balanceOf(proxima424), amountOfDAIToSend);
@@ -128,9 +133,108 @@ contract testERC20 is Test {
         ops[0] = userOp;
  
         uint256 prevGas = gasleft();
-        console.log("Kernel ETH Mainnet :Gas consumed in DAI transfer (warm access) is :" );
+        console.log("Kernel ETH Mainnet :: Gas consumed in DAI transfer (warm access) is :" );
         entryPoint.handleOps(ops, beneficiary);
         console.log(prevGas-gasleft());
         assertEq(IERC20(dai).balanceOf(proxima424), amountOfDAIToSend+5000);
+    }
+
+    function testERC20ColdApprove() public {
+        // Fund userSA with DAI
+        vm.startPrank(richDAI);
+        IERC20(dai).transfer(address(userSA), 5000);
+        vm.stopPrank();
+
+        // Construct userOp to approve 2500 DAI from userSA to proxima424
+        uint256 amountOfDAIToApprove = 2500;
+        bytes memory txnData = abi.encodeWithSignature("approve(address,uint256)", proxima424, amountOfDAIToApprove);
+        bytes memory txnData1 = abi.encodeWithSelector(Kernel.execute.selector, dai,0,txnData,Operation.Call);
+        UserOperation memory userOp = entryPoint.fillUserOp(address(userSA), txnData1);
+        userOp.signature = abi.encodePacked(bytes4(0x00000000), entryPoint.signUserOpHash(vm, ownerKey, userOp));
+
+        UserOperation[] memory ops = new UserOperation[](1);
+        ops[0] = userOp;
+
+        console.log("Kernel ETH Mainnet :: Gas consumed in DAI Approval (cold access) is :");
+        // Send the userOp to EntryPoint
+        uint256 prevGas = gasleft();
+        IEntryPoint(entryPointAdr).handleOps(ops, payable(alice));
+        console.log(prevGas - gasleft());
+        assertEq(IERC20(dai).allowance(address(userSA), proxima424), amountOfDAIToApprove);
+    }
+
+    function testERC20WarmApprove() public {
+        // Fund userSA with DAI
+        vm.startPrank(richDAI);
+        IERC20(dai).transfer(address(userSA), 5000);
+        vm.stopPrank();
+
+        // To make the allowance mapping storage slot warm,
+        // Approve it initially of 2500 DAI
+        uint256 amountOfDAIToApprove = 2500;
+        vm.startPrank(address(userSA));
+        IERC20(dai).approve(proxima424, amountOfDAIToApprove);
+        vm.stopPrank();
+        assertEq(IERC20(dai).allowance(address(userSA), proxima424), amountOfDAIToApprove);
+
+        // Construct userOp to again approve 2500 DAI from userSA to proxima424
+        bytes memory txnData = abi.encodeWithSignature("approve(address,uint256)", proxima424, 2 * amountOfDAIToApprove);
+        bytes memory txnData1 = abi.encodeWithSelector(Kernel.execute.selector, dai,0,txnData,Operation.Call);
+        UserOperation memory userOp = entryPoint.fillUserOp(address(userSA), txnData1);
+        userOp.signature = abi.encodePacked(bytes4(0x00000000), entryPoint.signUserOpHash(vm, ownerKey, userOp));
+
+        UserOperation[] memory ops = new UserOperation[](1);
+        ops[0] = userOp;
+
+        console.log("Kernel ETH Mainnet :: Gas consumed in DAI Approval (warm access) is :");
+        // Send the userOp to EntryPoint
+        uint256 prevGas = gasleft();
+        IEntryPoint(entryPointAdr).handleOps(ops, payable(alice));
+        console.log(prevGas - gasleft());
+
+        assertEq(IERC20(dai).allowance(address(userSA), proxima424), 2 * amountOfDAIToApprove);
+    }
+
+    function testERC20MintMockCold() public {
+        // Mint MockERC20 with address with zero balance
+        uint256 amountToMint = 5000;
+        //Construct userOp
+        bytes memory txnData = abi.encodeWithSignature("mint(address,uint256)", proxima424, amountToMint);
+        bytes memory txnData1 = abi.encodeWithSelector(Kernel.execute.selector, address(mockToken),0,txnData,Operation.Call);
+        UserOperation memory userOp = entryPoint.fillUserOp(address(userSA), txnData1);
+        userOp.signature = abi.encodePacked(bytes4(0x00000000), entryPoint.signUserOpHash(vm, ownerKey, userOp));
+
+        UserOperation[] memory ops = new UserOperation[](1);
+        ops[0] = userOp;     
+
+        console.log("Kernel ETH Mainet :: Gas consumed in minting ERC20 (cold mint) is :");
+        // Send the userOp to EntryPoint
+        uint256 prevGas = gasleft();
+        IEntryPoint(entryPointAdr).handleOps(ops, payable(alice));
+        console.log(prevGas - gasleft());
+
+        assertEq(mockToken.balanceOf(proxima424), amountToMint);
+    }
+
+    function testERC20MintMockWarm() public {
+        // Mint some MockToken ERC20 to proxima424 to make the storage slot warm
+        uint256 amountToMint = 5000;
+        mockToken.mint(proxima424, amountToMint);
+
+        //Construct userOp
+        bytes memory txnData = abi.encodeWithSignature("mint(address,uint256)", proxima424, amountToMint);
+        bytes memory txnData1 = abi.encodeWithSelector(Kernel.execute.selector, address(mockToken),0,txnData,Operation.Call);
+        UserOperation memory userOp = entryPoint.fillUserOp(address(userSA), txnData1);
+        userOp.signature = abi.encodePacked(bytes4(0x00000000), entryPoint.signUserOpHash(vm, ownerKey, userOp));
+
+        UserOperation[] memory ops = new UserOperation[](1);
+        ops[0] = userOp;     
+
+        console.log("Kernel ETH Mainnet :: Gas consumed in minting ERC20 (warm mint) is :");
+        // Send the userOp to EntryPoint
+        uint256 prevGas = gasleft();
+        IEntryPoint(entryPointAdr).handleOps(ops, payable(alice));
+        console.log(prevGas - gasleft());
+        assertEq(mockToken.balanceOf(proxima424), 2 * amountToMint);
     }
 }
