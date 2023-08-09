@@ -10,10 +10,10 @@ import "src/factory/ECDSAKernelFactory.sol";
 import "src/test/TestValidator.sol";
 import "src/test/TestExecutor.sol";
 import "src/test/TestERC721.sol";
-import {MockERC20} from "./MockERC20.sol";
+import {MockERC20} from "../MockERC20.sol";
 // test utils
 import "forge-std/Test.sol";
-import {ERC4337Utils} from "./ERC4337Utils.sol";
+import {ERC4337Utils} from "../ERC4337Utils.sol";
 // test actions/validators
 import "src/validator/ERC165SessionKeyValidator.sol";
 import "src/executor/TokenActions.sol";
